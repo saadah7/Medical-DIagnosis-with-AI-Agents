@@ -11,15 +11,6 @@ It is **not intended for clinical use**.
 
 ---
 
-## ✨ What’s New (Latest Update)
-
-- Added **MIT License**  
-- Fixed bugs and updated `requirements.txt`  
-- Added `.gitignore`  
-- Upgraded core LLM to **GPT-5**  
-
----
-
 ## 🚀 How It Works
 
 In the current version, we use **three AI agents (GPT-5)**, each specializing in a different aspect of medical analysis.  
@@ -83,10 +74,3 @@ Planned improvements for upcoming versions include:
 - **Automated Testing**: Add evaluation pipelines and smoke-test CI with mocked LLM calls for reproducibility.  
 ---
 
-## 📜 License
-
-This repository is licensed under the **MIT License**.  
-
-You are free to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the software, subject to the conditions described in the [LICENSE](LICENSE) file.  
-
-The software is provided **“as is”**, without warranty of any kind.
