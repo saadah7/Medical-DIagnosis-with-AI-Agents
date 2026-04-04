@@ -1,59 +1,88 @@
-# Importing the needed modules
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+# ─────────────────────────────────────────────────────────────────────────────
+# Medical Diagnosis with AI Agents
+# Branch: feature/more-agents
+# Runs 100% locally via Ollama — no API key needed.
+# ─────────────────────────────────────────────────────────────────────────────
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from Utils.agents import Cardiologist, Psychologist, Pulmonologist, MultidisciplinaryTeam
+from Utils.agents import select_specialists, SPECIALIST_REGISTRY, MultidisciplinaryTeam
 import os
 
-# NOTE: No API key or .env file needed — this project runs 100% locally via Ollama.
-# Make sure Ollama is installed and running before executing this script.
-# See README_LOCAL.md for setup instructions.
-# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-# Read the medical report (change this path to try different reports)
+# ── Config ────────────────────────────────────────────────────────────────────
 REPORT_PATH = "Medical Reports/Medical Rerort - Michael Johnson - Panic Attack Disorder.txt"
+OUTPUT_PATH = "results/final_diagnosis.txt"
 
+# ── Load Report ───────────────────────────────────────────────────────────────
 with open(REPORT_PATH, "r") as file:
     medical_report = file.read()
 
-print(f"\n📄 Loaded report: {REPORT_PATH}\n")
-print("=" * 60)
+print("\n" + "=" * 65)
+print("   🏥  MEDICAL DIAGNOSIS — AI AGENT SYSTEM")
+print("=" * 65)
+print(f"\n📄 Report: {REPORT_PATH}\n")
 
-agents = {
-    "Cardiologist": Cardiologist(medical_report),
-    "Psychologist": Psychologist(medical_report),
-    "Pulmonologist": Pulmonologist(medical_report)
-}
+# ── Auto-select Relevant Specialists ─────────────────────────────────────────
+selected = select_specialists(medical_report)
+print(f"🤖 Auto-selected {len(selected)} specialists based on report content:")
+for s in selected:
+    print(f"   • {s}")
+print()
 
-# Function to run each agent and get their response
+# ── Instantiate Selected Agents ───────────────────────────────────────────────
+agents = {name: SPECIALIST_REGISTRY[name](medical_report) for name in selected}
+
+# ── Run Agents Concurrently ───────────────────────────────────────────────────
+print("=" * 65)
+print("⚙️  Running specialist agents in parallel...\n")
+
+responses = {}
+
 def get_response(agent_name, agent):
     response = agent.run()
     return agent_name, response
 
-# Run the agents concurrently and collect responses
-responses = {}
 with ThreadPoolExecutor() as executor:
     futures = {executor.submit(get_response, name, agent): name for name, agent in agents.items()}
     for future in as_completed(futures):
         agent_name, response = future.result()
         responses[agent_name] = response
+        print(f"  ✅ {agent_name} done.")
 
-team_agent = MultidisciplinaryTeam(
-    cardiologist_report=responses["Cardiologist"],
-    psychologist_report=responses["Psychologist"],
-    pulmonologist_report=responses["Pulmonologist"]
+# ── Run Multidisciplinary Team ────────────────────────────────────────────────
+print(f"\n{'=' * 65}")
+print("🧠  Multidisciplinary Team synthesizing all findings...\n")
+
+team_agent = MultidisciplinaryTeam(specialist_reports=responses)
+final_summary = team_agent.run()
+
+# ── Save full output (specialist reports + summary) to file ──────────────────
+specialists_used = ", ".join(responses.keys())
+full_output = (
+    f"MEDICAL DIAGNOSIS REPORT\n"
+    f"{'=' * 65}\n"
+    f"Report File  : {REPORT_PATH}\n"
+    f"Specialists  : {specialists_used}\n"
+    f"{'=' * 65}\n\n"
+    f"INDIVIDUAL SPECIALIST REPORTS\n"
+    f"{'-' * 65}\n"
+)
+for specialist, report in responses.items():
+    full_output += f"\n[{specialist}]\n{report}\n"
+
+full_output += (
+    f"\n{'=' * 65}\n"
+    f"FINAL PATIENT SUMMARY (Multidisciplinary Team)\n"
+    f"{'=' * 65}\n"
+    f"{final_summary}\n"
 )
 
-# Run the MultidisciplinaryTeam agent to generate the final diagnosis
-final_diagnosis = team_agent.run()
-final_diagnosis_text = "### Final Diagnosis:\n\n" + final_diagnosis
+os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+    f.write(full_output)
 
-txt_output_path = "results/final_diagnosis.txt"
-os.makedirs(os.path.dirname(txt_output_path), exist_ok=True)
-
-with open(txt_output_path, "w") as txt_file:
-    txt_file.write(final_diagnosis_text)
-
-print("\n" + "=" * 60)
-print(final_diagnosis_text)
-print("=" * 60)
-print(f"\n✅ Final diagnosis saved to: {txt_output_path}")
+# ── Print only the final summary to console ───────────────────────────────────
+print("=" * 65)
+print("📋  FINAL PATIENT SUMMARY\n")
+print(final_summary)
+print("\n" + "=" * 65)
+print(f"✅  Full report (with all specialist notes) saved to: {OUTPUT_PATH}")
+print("=" * 65 + "\n")
