@@ -1,19 +1,22 @@
-# Importing the needed modules 
+# Importing the needed modules
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from Utils.Agents import Cardiologist, Psychologist, Pulmonologist, MultidisciplinaryTeam
-from dotenv import load_dotenv
-import json, os
+from Utils.agents import Cardiologist, Psychologist, Pulmonologist, MultidisciplinaryTeam
+import os
+
+# NOTE: No API key or .env file needed — this project runs 100% locally via Ollama.
+# Make sure Ollama is installed and running before executing this script.
+# See README_LOCAL.md for setup instructions.
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-# Loading API key from a dotenv file.
-load_dotenv(dotenv_path='apikey.env')
+# Read the medical report (change this path to try different reports)
+REPORT_PATH = "Medical Reports/Medical Rerort - Michael Johnson - Panic Attack Disorder.txt"
 
-# read the medical report
-with open("Medical Reports\Medical Rerort - Michael Johnson - Panic Attack Disorder.txt", "r") as file:
+with open(REPORT_PATH, "r") as file:
     medical_report = file.read()
 
+print(f"\n📄 Loaded report: {REPORT_PATH}\n")
+print("=" * 60)
 
 agents = {
     "Cardiologist": Cardiologist(medical_report),
@@ -30,7 +33,6 @@ def get_response(agent_name, agent):
 responses = {}
 with ThreadPoolExecutor() as executor:
     futures = {executor.submit(get_response, name, agent): name for name, agent in agents.items()}
-    
     for future in as_completed(futures):
         agent_name, response = future.result()
         responses[agent_name] = response
@@ -44,15 +46,14 @@ team_agent = MultidisciplinaryTeam(
 # Run the MultidisciplinaryTeam agent to generate the final diagnosis
 final_diagnosis = team_agent.run()
 final_diagnosis_text = "### Final Diagnosis:\n\n" + final_diagnosis
-txt_output_path = "results/final_diagnosis.txt"
 
-# Ensure the directory exists
+txt_output_path = "results/final_diagnosis.txt"
 os.makedirs(os.path.dirname(txt_output_path), exist_ok=True)
 
-# Write the final diagnosis to the text file
 with open(txt_output_path, "w") as txt_file:
     txt_file.write(final_diagnosis_text)
 
-print(f"Final diagnosis has been saved to {txt_output_path}")
-
-
+print("\n" + "=" * 60)
+print(final_diagnosis_text)
+print("=" * 60)
+print(f"\n✅ Final diagnosis saved to: {txt_output_path}")
