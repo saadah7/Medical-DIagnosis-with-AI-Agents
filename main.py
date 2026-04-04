@@ -7,22 +7,94 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from Utils.agents import select_specialists, SPECIALIST_REGISTRY, MultidisciplinaryTeam
 import os
 
-# ── Config ────────────────────────────────────────────────────────────────────
-REPORT_PATH = "Medical Reports/Medical Rerort - Michael Johnson - Panic Attack Disorder.txt"
-OUTPUT_PATH = "results/final_diagnosis.txt"
-
-# ── Load Report ───────────────────────────────────────────────────────────────
-with open(REPORT_PATH, "r") as file:
-    medical_report = file.read()
-
+# ── Mode Selection ────────────────────────────────────────────────────────────
 print("\n" + "=" * 65)
 print("   🏥  MEDICAL DIAGNOSIS — AI AGENT SYSTEM")
 print("=" * 65)
-print(f"\n📄 Report: {REPORT_PATH}\n")
+print("\nHow would you like to provide patient data?")
+print("  1. Load from a Medical Report file")
+print("  2. Enter patient symptoms manually")
+print()
+
+while True:
+    mode = input("Enter 1 or 2: ").strip()
+    if mode in ("1", "2"):
+        break
+    print("  ⚠️  Please enter 1 or 2.")
+
+# ── Mode 1: Load from file (existing behaviour) ───────────────────────────────
+if mode == "1":
+    print("\nAvailable reports in 'Medical Reports/' folder:")
+    reports_dir = "Medical Reports"
+    report_files = [f for f in os.listdir(reports_dir) if f.endswith(".txt")]
+    for i, f in enumerate(report_files, 1):
+        print(f"  {i}. {f}")
+    print()
+
+    while True:
+        try:
+            choice = int(input("Enter report number: ").strip())
+            if 1 <= choice <= len(report_files):
+                break
+            print(f"  ⚠️  Enter a number between 1 and {len(report_files)}.")
+        except ValueError:
+            print("  ⚠️  Please enter a valid number.")
+
+    REPORT_PATH = os.path.join(reports_dir, report_files[choice - 1])
+    with open(REPORT_PATH, "r", encoding="utf-8") as file:
+        medical_report = file.read()
+
+    source_label = f"File: {REPORT_PATH}"
+    OUTPUT_PATH = "results/final_diagnosis.txt"
+
+# ── Mode 2: Manual symptom input ─────────────────────────────────────────────
+else:
+    print("\n" + "-" * 65)
+    print("📝  PATIENT INFORMATION")
+    print("-" * 65)
+    print("Please provide the following details.\n")
+
+    name    = input("Patient Name       : ").strip() or "Unknown"
+    age     = input("Age                : ").strip() or "Unknown"
+    gender  = input("Gender             : ").strip() or "Unknown"
+
+    print("\nDescribe the patient's symptoms (press Enter twice when done):")
+    print("Example: chest pain, shortness of breath, dizziness, anxiety\n")
+    symptoms_lines = []
+    while True:
+        line = input()
+        if line == "" and symptoms_lines and symptoms_lines[-1] == "":
+            break
+        symptoms_lines.append(line)
+    symptoms = "\n".join(symptoms_lines).strip()
+
+    print("\nAny known medical history? (press Enter to skip):")
+    history = input("> ").strip() or "None provided."
+
+    print("\nAny current medications? (press Enter to skip):")
+    medications = input("> ").strip() or "None provided."
+
+    # Build a structured report from user input
+    medical_report = (
+        f"Patient Name: {name}\n"
+        f"Age: {age}\n"
+        f"Gender: {gender}\n\n"
+        f"Presenting Symptoms:\n{symptoms}\n\n"
+        f"Medical History:\n{history}\n\n"
+        f"Current Medications:\n{medications}\n"
+    )
+
+    source_label = f"Manual Input — Patient: {name}"
+    safe_name = name.replace(" ", "_")
+    OUTPUT_PATH = f"results/{safe_name}_diagnosis.txt"
+
+# ── Display what we're working with ──────────────────────────────────────────
+print("\n" + "=" * 65)
+print(f"📄 {source_label}\n")
 
 # ── Auto-select Relevant Specialists ─────────────────────────────────────────
 selected = select_specialists(medical_report)
-print(f"🤖 Auto-selected {len(selected)} specialists based on report content:")
+print(f"🤖 Auto-selected {len(selected)} specialists based on patient data:")
 for s in selected:
     print(f"   • {s}")
 print()
@@ -54,12 +126,12 @@ print("🧠  Multidisciplinary Team synthesizing all findings...\n")
 team_agent = MultidisciplinaryTeam(specialist_reports=responses)
 final_summary = team_agent.run()
 
-# ── Save full output (specialist reports + summary) to file ──────────────────
+# ── Save full output ──────────────────────────────────────────────────────────
 specialists_used = ", ".join(responses.keys())
 full_output = (
     f"MEDICAL DIAGNOSIS REPORT\n"
     f"{'=' * 65}\n"
-    f"Report File  : {REPORT_PATH}\n"
+    f"Source       : {source_label}\n"
     f"Specialists  : {specialists_used}\n"
     f"{'=' * 65}\n\n"
     f"INDIVIDUAL SPECIALIST REPORTS\n"
@@ -79,10 +151,10 @@ os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
 with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
     f.write(full_output)
 
-# ── Print only the final summary to console ───────────────────────────────────
+# ── Print final summary ───────────────────────────────────────────────────────
 print("=" * 65)
 print("📋  FINAL PATIENT SUMMARY\n")
 print(final_summary)
 print("\n" + "=" * 65)
-print(f"✅  Full report (with all specialist notes) saved to: {OUTPUT_PATH}")
+print(f"✅  Full report saved to: {OUTPUT_PATH}")
 print("=" * 65 + "\n")
