@@ -32,8 +32,7 @@ SPECIALIST_KEYWORDS = {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Each specialist prompt now ends with a mandatory CONFIDENCE block.
-# Format is strict so we can reliably parse it out.
+# Confidence block appended to every specialist prompt.
 # ─────────────────────────────────────────────────────────────────────────────
 CONFIDENCE_INSTRUCTION = (
     "\n\nAt the very end of your response, you MUST add this block exactly:\n"
@@ -45,118 +44,113 @@ CONFIDENCE_INSTRUCTION = (
     "  Low    = no direct indicators, included as precaution only\n"
 )
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Differential diagnosis reasoning instruction — appended to every specialist.
+# This is the core of Step 4: agents now reason like real clinicians by
+# explicitly considering, ranking, and ruling out competing diagnoses.
+# ─────────────────────────────────────────────────────────────────────────────
+DIFFERENTIAL_INSTRUCTION = (
+    "\n\nYou MUST structure your response in EXACTLY these 4 sections:\n\n"
+    "FINDINGS\n"
+    "List the key symptoms, signs, and test results from this report that are relevant to your specialty.\n\n"
+    "DIFFERENTIAL DIAGNOSIS\n"
+    "List 2-3 possible conditions from most to least likely. For each one:\n"
+    "  - Condition name\n"
+    "  - SUPPORTING EVIDENCE: specific findings from the report that point to this condition\n"
+    "  - AGAINST: specific findings or absences that argue against this condition\n"
+    "  - LIKELIHOOD: Most Likely / Possible / Less Likely\n\n"
+    "PRIMARY DIAGNOSIS\n"
+    "State the single most likely condition and explain in 2 sentences why the evidence "
+    "favours it over the alternatives.\n\n"
+    "NEXT STEPS\n"
+    "List 3-4 specific, prioritised investigations or treatments to confirm or manage the primary diagnosis.\n"
+)
+
 SPECIALIST_PROMPTS = {
     "Cardiologist": (
         "You are an experienced Cardiologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Cardiovascular system only — heart, blood vessels, circulation, blood pressure.\n\n"
-        "Review the report and address the following:\n"
-        "1. FINDINGS: List any cardiac-related symptoms, signs, or test results (ECG, Holter, echo, blood pressure, lipids).\n"
-        "2. CONCERNS: Identify possible cardiac conditions (e.g. arrhythmia, structural abnormality, hypertension, coronary disease).\n"
-        "3. NEXT STEPS: Recommend specific cardiac investigations or treatments needed.\n\n"
+        "YOUR SCOPE: Cardiovascular system only — heart, blood vessels, circulation, blood pressure.\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + DIFFERENTIAL_INSTRUCTION
         + CONFIDENCE_INSTRUCTION
     ),
     "Psychologist": (
         "You are an experienced Psychologist/Psychiatrist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Mental health, psychological well-being, behavioral patterns, emotional state.\n\n"
-        "Review the report and address the following:\n"
-        "1. FINDINGS: List any mental health symptoms mentioned (anxiety, depression, sleep issues, panic, stress, trauma).\n"
-        "2. CONCERNS: Identify possible psychological or psychiatric conditions with reasoning.\n"
-        "3. NEXT STEPS: Recommend specific interventions (therapy type, counseling, psychiatric referral, medications if indicated).\n\n"
+        "YOUR SCOPE: Mental health, psychological well-being, behavioral patterns, emotional state.\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + DIFFERENTIAL_INSTRUCTION
         + CONFIDENCE_INSTRUCTION
     ),
     "Pulmonologist": (
         "You are an experienced Pulmonologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Respiratory system — lungs, airways, breathing, oxygen levels.\n\n"
-        "Review the report and address the following:\n"
-        "1. FINDINGS: List any respiratory symptoms or test results (spirometry, O2 sat, chest X-ray, breath sounds).\n"
-        "2. CONCERNS: Identify possible respiratory conditions (e.g. asthma, COPD, infection, pulmonary embolism).\n"
-        "3. NEXT STEPS: Recommend specific pulmonary investigations or treatments.\n\n"
+        "YOUR SCOPE: Respiratory system — lungs, airways, breathing, oxygen levels.\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + DIFFERENTIAL_INSTRUCTION
         + CONFIDENCE_INSTRUCTION
     ),
     "Neurologist": (
         "You are an experienced Neurologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Nervous system — brain, spinal cord, peripheral nerves, cognition, movement.\n\n"
-        "Review the report and address the following:\n"
-        "1. FINDINGS: List any neurological symptoms (headaches, memory loss, dizziness, tremors, numbness, seizures).\n"
-        "2. CONCERNS: Identify possible neurological conditions (e.g. migraine, Alzheimer's, neuropathy, stroke risk, Parkinson's).\n"
-        "3. NEXT STEPS: Recommend specific neurological tests (MRI, EEG, nerve conduction studies) or treatments.\n\n"
+        "YOUR SCOPE: Nervous system — brain, spinal cord, peripheral nerves, cognition, movement.\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + DIFFERENTIAL_INSTRUCTION
         + CONFIDENCE_INSTRUCTION
     ),
     "Endocrinologist": (
         "You are an experienced Endocrinologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Hormonal and metabolic systems — diabetes, thyroid, adrenal, pituitary, reproductive hormones.\n\n"
-        "Review the report and address the following:\n"
-        "1. FINDINGS: List any metabolic or hormonal markers (glucose, HbA1c, TSH, insulin, cortisol, hormone levels).\n"
-        "2. CONCERNS: Identify possible endocrine conditions (e.g. Type 2 Diabetes, hypothyroidism, PCOS, Cushing's).\n"
-        "3. NEXT STEPS: Recommend specific endocrine tests or management strategies.\n\n"
+        "YOUR SCOPE: Hormonal and metabolic systems — diabetes, thyroid, adrenal, pituitary, reproductive hormones.\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + DIFFERENTIAL_INSTRUCTION
         + CONFIDENCE_INSTRUCTION
     ),
     "Gastroenterologist": (
         "You are an experienced Gastroenterologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Digestive system — stomach, intestines, liver, pancreas, bowel.\n\n"
-        "Review the report and address the following:\n"
-        "1. FINDINGS: List any GI symptoms (nausea, vomiting, abdominal pain, diarrhea, constipation, bloating, reflux).\n"
-        "2. CONCERNS: Identify possible GI conditions (e.g. IBS, Crohn's, GERD, liver disease, ulcers).\n"
-        "3. NEXT STEPS: Recommend specific GI investigations (endoscopy, colonoscopy, stool tests, LFTs) or treatments.\n\n"
+        "YOUR SCOPE: Digestive system — stomach, intestines, liver, pancreas, bowel.\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + DIFFERENTIAL_INSTRUCTION
         + CONFIDENCE_INSTRUCTION
     ),
     "Dermatologist": (
         "You are an experienced Dermatologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Skin, hair, nails — conditions, lesions, rashes, infections.\n\n"
-        "Review the report and address the following:\n"
-        "1. FINDINGS: List any skin-related symptoms (rashes, lesions, itching, hair loss, nail changes, wounds).\n"
-        "2. CONCERNS: Identify possible dermatological conditions (e.g. eczema, psoriasis, alopecia, infection, skin cancer risk).\n"
-        "3. NEXT STEPS: Recommend specific dermatological tests or treatments (biopsy, topical/systemic therapy).\n\n"
+        "YOUR SCOPE: Skin, hair, nails — conditions, lesions, rashes, infections.\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + DIFFERENTIAL_INSTRUCTION
         + CONFIDENCE_INSTRUCTION
     ),
     "Hematologist": (
         "You are an experienced Hematologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Blood and blood disorders — CBC, anemia, clotting, blood cancers, iron levels.\n\n"
-        "Review the report and address the following:\n"
-        "1. FINDINGS: List any blood-related findings (hemoglobin, WBC, RBC, platelets, iron, ferritin, clotting).\n"
-        "2. CONCERNS: Identify possible hematological conditions (e.g. anemia, thrombocytopenia, leukemia, clotting disorder).\n"
-        "3. NEXT STEPS: Recommend specific blood tests or hematology referrals needed.\n\n"
+        "YOUR SCOPE: Blood and blood disorders — CBC, anemia, clotting, blood cancers, iron levels.\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + DIFFERENTIAL_INSTRUCTION
         + CONFIDENCE_INSTRUCTION
     ),
 }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Parse confidence score and reason out of a specialist response.
 # Returns: (clean_report, confidence_level, confidence_reason)
 # ─────────────────────────────────────────────────────────────────────────────
 def parse_confidence(raw_response: str) -> tuple:
-    confidence = "Medium"  # safe default
+    confidence = "Medium"
     reason     = "Based on available indicators in the report."
 
-    # Extract CONFIDENCE level
     match = re.search(r"CONFIDENCE:\s*(High|Medium|Low)", raw_response, re.IGNORECASE)
     if match:
         confidence = match.group(1).capitalize()
 
-    # Extract CONFIDENCE_REASON
     reason_match = re.search(r"CONFIDENCE_REASON:\s*(.+?)(?:\n|$)", raw_response, re.IGNORECASE)
     if reason_match:
         reason = reason_match.group(1).strip()
 
-    # Strip the confidence block from the clinical report
     clean = re.sub(r"\nCONFIDENCE:.*", "", raw_response, flags=re.IGNORECASE | re.DOTALL).strip()
-
     return clean, confidence, reason
 
 
@@ -175,7 +169,7 @@ def select_specialists(medical_report: str) -> list:
 
 class Agent:
     def __init__(self, medical_report=None, role=None, extra_info=None):
-        self.medical_report = medical_report
+        self.medical_report  = medical_report
         self.role            = role
         self.extra_info      = extra_info
         self.prompt_template = self.create_prompt_template()
@@ -189,7 +183,6 @@ class Agent:
         if self.role == "MultidisciplinaryTeam":
             specialist_section = ""
             for specialist, data in self.extra_info.get("specialist_reports", {}).items():
-                # data is now a dict with keys: report, confidence, confidence_reason
                 conf   = data.get("confidence", "Medium")
                 reason = data.get("confidence_reason", "")
                 report = data.get("report", "")
@@ -200,17 +193,29 @@ class Agent:
 
             template = (
                 "You are the lead physician chairing a Multidisciplinary Team (MDT) meeting.\n"
-                "The following specialists have reviewed the same patient:\n\n"
+                "Each specialist has provided their findings, a differential diagnosis, "
+                "and a primary diagnosis with supporting and opposing evidence.\n\n"
                 + specialist_section +
-                "YOUR TASK: Write a single concise Patient Summary Report in EXACTLY this format:\n\n"
+                "YOUR TASK: Synthesize all specialist differentials into one unified patient report "
+                "using EXACTLY this format:\n\n"
                 "PATIENT SUMMARY\n"
                 "---------------\n"
                 "2-3 sentences describing the patient's overall condition in plain language.\n\n"
                 "TOP 3 DIAGNOSES\n"
                 "---------------\n"
-                "1. [Condition] - one sentence: what it is and which specialists flagged it.\n"
-                "2. [Condition] - one sentence: what it is and which specialists flagged it.\n"
-                "3. [Condition] - one sentence: what it is and which specialists flagged it.\n\n"
+                "Rank the top 3 diagnoses across ALL specialists by overall likelihood. For each:\n"
+                "1. [Condition] — [Likelihood: Most Likely/Possible/Less Likely]\n"
+                "   Flagged by: [specialist names]\n"
+                "   Key evidence FOR: [2-3 specific findings]\n"
+                "   Key evidence AGAINST: [1-2 specific findings or gaps]\n\n"
+                "2. [Condition] — [Likelihood]\n"
+                "   Flagged by: ...\n"
+                "   Key evidence FOR: ...\n"
+                "   Key evidence AGAINST: ...\n\n"
+                "3. [Condition] — [Likelihood]\n"
+                "   Flagged by: ...\n"
+                "   Key evidence FOR: ...\n"
+                "   Key evidence AGAINST: ...\n\n"
                 "KEY FINDINGS\n"
                 "---------------\n"
                 "- [finding 1]\n"
@@ -226,8 +231,8 @@ class Agent:
                 "4. [Fourth action]\n\n"
                 "OVERALL RISK LEVEL\n"
                 "---------------\n"
-                "Low / Moderate / High - one sentence justification.\n\n"
-                "Keep the entire report under 400 words. Be direct. No repetition. No preamble."
+                "Low / Moderate / High — one sentence justification.\n\n"
+                "Be direct and clinical. No preamble. No repetition. Keep under 500 words."
             )
             return PromptTemplate.from_template(template)
 
@@ -241,7 +246,6 @@ class Agent:
             response = self.model.invoke(prompt)
             raw = response.content
 
-            # For specialist agents, parse confidence out
             if self.role != "MultidisciplinaryTeam":
                 clean_report, confidence, confidence_reason = parse_confidence(raw)
                 return {
@@ -249,7 +253,7 @@ class Agent:
                     "confidence":        confidence,
                     "confidence_reason": confidence_reason,
                 }
-            return raw  # MDT returns plain text
+            return raw
 
         except Exception as e:
             print(f"  ❌ Error in {self.role}: {e}")
