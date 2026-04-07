@@ -1,5 +1,6 @@
 from langchain_core.prompts import PromptTemplate
 from langchain_ollama import ChatOllama
+import re
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Change OLLAMA_MODEL to switch models. Make sure you've pulled it first.
@@ -30,6 +31,20 @@ SPECIALIST_KEYWORDS = {
                            "bone marrow", "bleeding"],
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Each specialist prompt now ends with a mandatory CONFIDENCE block.
+# Format is strict so we can reliably parse it out.
+# ─────────────────────────────────────────────────────────────────────────────
+CONFIDENCE_INSTRUCTION = (
+    "\n\nAt the very end of your response, you MUST add this block exactly:\n"
+    "CONFIDENCE: <High|Medium|Low>\n"
+    "CONFIDENCE_REASON: <one sentence explaining why, referencing specific findings>\n"
+    "Rules for confidence level:\n"
+    "  High   = 3+ direct indicators from your specialty found in the report\n"
+    "  Medium = 1-2 indicators, or findings are indirect/suggestive\n"
+    "  Low    = no direct indicators, included as precaution only\n"
+)
+
 SPECIALIST_PROMPTS = {
     "Cardiologist": (
         "You are an experienced Cardiologist reviewing a patient's medical report.\n"
@@ -40,6 +55,7 @@ SPECIALIST_PROMPTS = {
         "3. NEXT STEPS: Recommend specific cardiac investigations or treatments needed.\n\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + CONFIDENCE_INSTRUCTION
     ),
     "Psychologist": (
         "You are an experienced Psychologist/Psychiatrist reviewing a patient's medical report.\n"
@@ -50,6 +66,7 @@ SPECIALIST_PROMPTS = {
         "3. NEXT STEPS: Recommend specific interventions (therapy type, counseling, psychiatric referral, medications if indicated).\n\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + CONFIDENCE_INSTRUCTION
     ),
     "Pulmonologist": (
         "You are an experienced Pulmonologist reviewing a patient's medical report.\n"
@@ -60,6 +77,7 @@ SPECIALIST_PROMPTS = {
         "3. NEXT STEPS: Recommend specific pulmonary investigations or treatments.\n\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + CONFIDENCE_INSTRUCTION
     ),
     "Neurologist": (
         "You are an experienced Neurologist reviewing a patient's medical report.\n"
@@ -70,6 +88,7 @@ SPECIALIST_PROMPTS = {
         "3. NEXT STEPS: Recommend specific neurological tests (MRI, EEG, nerve conduction studies) or treatments.\n\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + CONFIDENCE_INSTRUCTION
     ),
     "Endocrinologist": (
         "You are an experienced Endocrinologist reviewing a patient's medical report.\n"
@@ -80,6 +99,7 @@ SPECIALIST_PROMPTS = {
         "3. NEXT STEPS: Recommend specific endocrine tests or management strategies.\n\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + CONFIDENCE_INSTRUCTION
     ),
     "Gastroenterologist": (
         "You are an experienced Gastroenterologist reviewing a patient's medical report.\n"
@@ -90,6 +110,7 @@ SPECIALIST_PROMPTS = {
         "3. NEXT STEPS: Recommend specific GI investigations (endoscopy, colonoscopy, stool tests, LFTs) or treatments.\n\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + CONFIDENCE_INSTRUCTION
     ),
     "Dermatologist": (
         "You are an experienced Dermatologist reviewing a patient's medical report.\n"
@@ -100,6 +121,7 @@ SPECIALIST_PROMPTS = {
         "3. NEXT STEPS: Recommend specific dermatological tests or treatments (biopsy, topical/systemic therapy).\n\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + CONFIDENCE_INSTRUCTION
     ),
     "Hematologist": (
         "You are an experienced Hematologist reviewing a patient's medical report.\n"
@@ -110,8 +132,32 @@ SPECIALIST_PROMPTS = {
         "3. NEXT STEPS: Recommend specific blood tests or hematology referrals needed.\n\n"
         "Be specific and clinical. Do not comment outside your specialty.\n\n"
         "Patient Report:\n{medical_report}"
+        + CONFIDENCE_INSTRUCTION
     ),
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Parse confidence score and reason out of a specialist response.
+# Returns: (clean_report, confidence_level, confidence_reason)
+# ─────────────────────────────────────────────────────────────────────────────
+def parse_confidence(raw_response: str) -> tuple:
+    confidence = "Medium"  # safe default
+    reason     = "Based on available indicators in the report."
+
+    # Extract CONFIDENCE level
+    match = re.search(r"CONFIDENCE:\s*(High|Medium|Low)", raw_response, re.IGNORECASE)
+    if match:
+        confidence = match.group(1).capitalize()
+
+    # Extract CONFIDENCE_REASON
+    reason_match = re.search(r"CONFIDENCE_REASON:\s*(.+?)(?:\n|$)", raw_response, re.IGNORECASE)
+    if reason_match:
+        reason = reason_match.group(1).strip()
+
+    # Strip the confidence block from the clinical report
+    clean = re.sub(r"\nCONFIDENCE:.*", "", raw_response, flags=re.IGNORECASE | re.DOTALL).strip()
+
+    return clean, confidence, reason
 
 
 def select_specialists(medical_report: str) -> list:
@@ -130,8 +176,8 @@ def select_specialists(medical_report: str) -> list:
 class Agent:
     def __init__(self, medical_report=None, role=None, extra_info=None):
         self.medical_report = medical_report
-        self.role = role
-        self.extra_info = extra_info
+        self.role            = role
+        self.extra_info      = extra_info
         self.prompt_template = self.create_prompt_template()
         self.model = ChatOllama(
             model=OLLAMA_MODEL,
@@ -142,8 +188,15 @@ class Agent:
     def create_prompt_template(self):
         if self.role == "MultidisciplinaryTeam":
             specialist_section = ""
-            for specialist, report in self.extra_info.get("specialist_reports", {}).items():
-                specialist_section += f"[{specialist}]\n{report}\n\n"
+            for specialist, data in self.extra_info.get("specialist_reports", {}).items():
+                # data is now a dict with keys: report, confidence, confidence_reason
+                conf   = data.get("confidence", "Medium")
+                reason = data.get("confidence_reason", "")
+                report = data.get("report", "")
+                specialist_section += (
+                    f"[{specialist}] (Confidence: {conf} — {reason})\n"
+                    f"{report}\n\n"
+                )
 
             template = (
                 "You are the lead physician chairing a Multidisciplinary Team (MDT) meeting.\n"
@@ -186,44 +239,53 @@ class Agent:
         prompt = self.prompt_template.format(medical_report=self.medical_report or "")
         try:
             response = self.model.invoke(prompt)
-            return response.content
+            raw = response.content
+
+            # For specialist agents, parse confidence out
+            if self.role != "MultidisciplinaryTeam":
+                clean_report, confidence, confidence_reason = parse_confidence(raw)
+                return {
+                    "report":            clean_report,
+                    "confidence":        confidence,
+                    "confidence_reason": confidence_reason,
+                }
+            return raw  # MDT returns plain text
+
         except Exception as e:
             print(f"  ❌ Error in {self.role}: {e}")
             print("  Tip: Make sure Ollama is running — run: ollama serve")
-            return f"[{self.role} analysis unavailable: {e}]"
+            if self.role != "MultidisciplinaryTeam":
+                return {
+                    "report":            f"[{self.role} analysis unavailable: {e}]",
+                    "confidence":        "Low",
+                    "confidence_reason": "Error occurred during analysis.",
+                }
+            return f"[MDT analysis unavailable: {e}]"
 
 
 class Cardiologist(Agent):
-    def __init__(self, medical_report):
-        super().__init__(medical_report, "Cardiologist")
+    def __init__(self, medical_report): super().__init__(medical_report, "Cardiologist")
 
 class Psychologist(Agent):
-    def __init__(self, medical_report):
-        super().__init__(medical_report, "Psychologist")
+    def __init__(self, medical_report): super().__init__(medical_report, "Psychologist")
 
 class Pulmonologist(Agent):
-    def __init__(self, medical_report):
-        super().__init__(medical_report, "Pulmonologist")
+    def __init__(self, medical_report): super().__init__(medical_report, "Pulmonologist")
 
 class Neurologist(Agent):
-    def __init__(self, medical_report):
-        super().__init__(medical_report, "Neurologist")
+    def __init__(self, medical_report): super().__init__(medical_report, "Neurologist")
 
 class Endocrinologist(Agent):
-    def __init__(self, medical_report):
-        super().__init__(medical_report, "Endocrinologist")
+    def __init__(self, medical_report): super().__init__(medical_report, "Endocrinologist")
 
 class Gastroenterologist(Agent):
-    def __init__(self, medical_report):
-        super().__init__(medical_report, "Gastroenterologist")
+    def __init__(self, medical_report): super().__init__(medical_report, "Gastroenterologist")
 
 class Dermatologist(Agent):
-    def __init__(self, medical_report):
-        super().__init__(medical_report, "Dermatologist")
+    def __init__(self, medical_report): super().__init__(medical_report, "Dermatologist")
 
 class Hematologist(Agent):
-    def __init__(self, medical_report):
-        super().__init__(medical_report, "Hematologist")
+    def __init__(self, medical_report): super().__init__(medical_report, "Hematologist")
 
 
 SPECIALIST_REGISTRY = {
