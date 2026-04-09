@@ -2,10 +2,6 @@ from langchain_core.prompts import PromptTemplate
 from langchain_ollama import ChatOllama
 import re
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Change OLLAMA_MODEL to switch models. Make sure you've pulled it first.
-# Recommended: "llama3.2" (fast), "llama3.1:8b" (smarter), "mistral" (good balance)
-# ─────────────────────────────────────────────────────────────────────────────
 OLLAMA_MODEL = "llama3.2"
 
 SPECIALIST_KEYWORDS = {
@@ -32,112 +28,110 @@ SPECIALIST_KEYWORDS = {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Confidence block appended to every specialist prompt.
+# CRITICAL: All prompts explicitly forbid markdown formatting.
+# Plain text only — no asterisks, no bold, no headers with #.
+# The UI handles all visual formatting.
 # ─────────────────────────────────────────────────────────────────────────────
-CONFIDENCE_INSTRUCTION = (
-    "\n\nAt the very end of your response, you MUST add this block exactly:\n"
-    "CONFIDENCE: <High|Medium|Low>\n"
-    "CONFIDENCE_REASON: <one sentence explaining why, referencing specific findings>\n"
-    "Rules for confidence level:\n"
-    "  High   = 3+ direct indicators from your specialty found in the report\n"
-    "  Medium = 1-2 indicators, or findings are indirect/suggestive\n"
-    "  Low    = no direct indicators, included as precaution only\n"
+
+NO_MARKDOWN = (
+    "\n\nCRITICAL FORMATTING RULES — strictly follow these:\n"
+    "- Do NOT use asterisks (*) or double asterisks (**) anywhere.\n"
+    "- Do NOT use markdown bold, italic, or headers.\n"
+    "- Do NOT use # headings.\n"
+    "- Write in plain text only.\n"
+    "- Use the section labels exactly as specified, nothing else.\n"
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Differential diagnosis reasoning instruction — appended to every specialist.
-# This is the core of Step 4: agents now reason like real clinicians by
-# explicitly considering, ranking, and ruling out competing diagnoses.
-# ─────────────────────────────────────────────────────────────────────────────
+CONFIDENCE_INSTRUCTION = (
+    "\n\nEnd your response with exactly these two lines:\n"
+    "CONFIDENCE: High, Medium, or Low\n"
+    "CONFIDENCE_REASON: one plain sentence referencing specific findings\n"
+    "Rules: High = 3+ direct specialty indicators. Medium = 1-2 indirect signs. Low = precautionary only.\n"
+)
+
 DIFFERENTIAL_INSTRUCTION = (
-    "\n\nYou MUST structure your response in EXACTLY these 4 sections:\n\n"
+    "\n\nStructure your entire response in exactly these 4 plain-text sections:\n\n"
     "FINDINGS\n"
-    "List the key symptoms, signs, and test results from this report that are relevant to your specialty.\n\n"
+    "List only the relevant symptoms, signs, and test results from the report. One item per line. No bullets, no asterisks.\n\n"
     "DIFFERENTIAL DIAGNOSIS\n"
-    "List 2-3 possible conditions from most to least likely. For each one:\n"
-    "  - Condition name\n"
-    "  - SUPPORTING EVIDENCE: specific findings from the report that point to this condition\n"
-    "  - AGAINST: specific findings or absences that argue against this condition\n"
-    "  - LIKELIHOOD: Most Likely / Possible / Less Likely\n\n"
+    "List up to 3 conditions, most likely first. For each write exactly:\n"
+    "Condition: [name]\n"
+    "For: [specific supporting evidence from the report]\n"
+    "Against: [specific contradicting evidence or missing data]\n"
+    "Likelihood: Most Likely, Possible, or Less Likely\n\n"
     "PRIMARY DIAGNOSIS\n"
-    "State the single most likely condition and explain in 2 sentences why the evidence "
-    "favours it over the alternatives.\n\n"
+    "State the most likely condition in one sentence. Then explain in one sentence why it is favoured over alternatives.\n\n"
     "NEXT STEPS\n"
-    "List 3-4 specific, prioritised investigations or treatments to confirm or manage the primary diagnosis.\n"
+    "List 3 specific investigations or treatments, one per line, numbered, no asterisks.\n"
 )
 
 SPECIALIST_PROMPTS = {
     "Cardiologist": (
-        "You are an experienced Cardiologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Cardiovascular system only — heart, blood vessels, circulation, blood pressure.\n"
-        "Be specific and clinical. Do not comment outside your specialty.\n\n"
+        "You are an experienced Cardiologist. Scope: cardiovascular system only.\n"
+        "Review the report below. Be concise and clinical.\n\n"
         "Patient Report:\n{medical_report}"
-        + DIFFERENTIAL_INSTRUCTION
-        + CONFIDENCE_INSTRUCTION
+        + DIFFERENTIAL_INSTRUCTION + NO_MARKDOWN + CONFIDENCE_INSTRUCTION
     ),
     "Psychologist": (
-        "You are an experienced Psychologist/Psychiatrist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Mental health, psychological well-being, behavioral patterns, emotional state.\n"
-        "Be specific and clinical. Do not comment outside your specialty.\n\n"
+        "You are an experienced Psychologist. Scope: mental health and psychological well-being only.\n"
+        "Review the report below. Be concise and clinical.\n\n"
         "Patient Report:\n{medical_report}"
-        + DIFFERENTIAL_INSTRUCTION
-        + CONFIDENCE_INSTRUCTION
+        + DIFFERENTIAL_INSTRUCTION + NO_MARKDOWN + CONFIDENCE_INSTRUCTION
     ),
     "Pulmonologist": (
-        "You are an experienced Pulmonologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Respiratory system — lungs, airways, breathing, oxygen levels.\n"
-        "Be specific and clinical. Do not comment outside your specialty.\n\n"
+        "You are an experienced Pulmonologist. Scope: respiratory system only.\n"
+        "Review the report below. Be concise and clinical.\n\n"
         "Patient Report:\n{medical_report}"
-        + DIFFERENTIAL_INSTRUCTION
-        + CONFIDENCE_INSTRUCTION
+        + DIFFERENTIAL_INSTRUCTION + NO_MARKDOWN + CONFIDENCE_INSTRUCTION
     ),
     "Neurologist": (
-        "You are an experienced Neurologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Nervous system — brain, spinal cord, peripheral nerves, cognition, movement.\n"
-        "Be specific and clinical. Do not comment outside your specialty.\n\n"
+        "You are an experienced Neurologist. Scope: nervous system only.\n"
+        "Review the report below. Be concise and clinical.\n\n"
         "Patient Report:\n{medical_report}"
-        + DIFFERENTIAL_INSTRUCTION
-        + CONFIDENCE_INSTRUCTION
+        + DIFFERENTIAL_INSTRUCTION + NO_MARKDOWN + CONFIDENCE_INSTRUCTION
     ),
     "Endocrinologist": (
-        "You are an experienced Endocrinologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Hormonal and metabolic systems — diabetes, thyroid, adrenal, pituitary, reproductive hormones.\n"
-        "Be specific and clinical. Do not comment outside your specialty.\n\n"
+        "You are an experienced Endocrinologist. Scope: hormonal and metabolic systems only.\n"
+        "Review the report below. Be concise and clinical.\n\n"
         "Patient Report:\n{medical_report}"
-        + DIFFERENTIAL_INSTRUCTION
-        + CONFIDENCE_INSTRUCTION
+        + DIFFERENTIAL_INSTRUCTION + NO_MARKDOWN + CONFIDENCE_INSTRUCTION
     ),
     "Gastroenterologist": (
-        "You are an experienced Gastroenterologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Digestive system — stomach, intestines, liver, pancreas, bowel.\n"
-        "Be specific and clinical. Do not comment outside your specialty.\n\n"
+        "You are an experienced Gastroenterologist. Scope: digestive system only.\n"
+        "Review the report below. Be concise and clinical.\n\n"
         "Patient Report:\n{medical_report}"
-        + DIFFERENTIAL_INSTRUCTION
-        + CONFIDENCE_INSTRUCTION
+        + DIFFERENTIAL_INSTRUCTION + NO_MARKDOWN + CONFIDENCE_INSTRUCTION
     ),
     "Dermatologist": (
-        "You are an experienced Dermatologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Skin, hair, nails — conditions, lesions, rashes, infections.\n"
-        "Be specific and clinical. Do not comment outside your specialty.\n\n"
+        "You are an experienced Dermatologist. Scope: skin, hair, nails only.\n"
+        "Review the report below. Be concise and clinical.\n\n"
         "Patient Report:\n{medical_report}"
-        + DIFFERENTIAL_INSTRUCTION
-        + CONFIDENCE_INSTRUCTION
+        + DIFFERENTIAL_INSTRUCTION + NO_MARKDOWN + CONFIDENCE_INSTRUCTION
     ),
     "Hematologist": (
-        "You are an experienced Hematologist reviewing a patient's medical report.\n"
-        "YOUR SCOPE: Blood and blood disorders — CBC, anemia, clotting, blood cancers, iron levels.\n"
-        "Be specific and clinical. Do not comment outside your specialty.\n\n"
+        "You are an experienced Hematologist. Scope: blood and blood disorders only.\n"
+        "Review the report below. Be concise and clinical.\n\n"
         "Patient Report:\n{medical_report}"
-        + DIFFERENTIAL_INSTRUCTION
-        + CONFIDENCE_INSTRUCTION
+        + DIFFERENTIAL_INSTRUCTION + NO_MARKDOWN + CONFIDENCE_INSTRUCTION
     ),
 }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Parse confidence score and reason out of a specialist response.
-# Returns: (clean_report, confidence_level, confidence_reason)
-# ─────────────────────────────────────────────────────────────────────────────
+def strip_markdown(text: str) -> str:
+    """Remove all markdown formatting from model output."""
+    # Remove bold/italic asterisks
+    text = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', text)
+    # Remove markdown headers
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    # Remove horizontal rules
+    text = re.sub(r'^[-_*]{3,}\s*$', '', text, flags=re.MULTILINE)
+    # Remove leading dashes used as bullets (keep numbered lists)
+    text = re.sub(r'^\s*[-•]\s+', '', text, flags=re.MULTILINE)
+    # Collapse 3+ blank lines to 2
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
 def parse_confidence(raw_response: str) -> tuple:
     confidence = "Medium"
     reason     = "Based on available indicators in the report."
@@ -150,7 +144,9 @@ def parse_confidence(raw_response: str) -> tuple:
     if reason_match:
         reason = reason_match.group(1).strip()
 
+    # Strip confidence block and all markdown from the clinical text
     clean = re.sub(r"\nCONFIDENCE:.*", "", raw_response, flags=re.IGNORECASE | re.DOTALL).strip()
+    clean = strip_markdown(clean)
     return clean, confidence, reason
 
 
@@ -187,52 +183,32 @@ class Agent:
                 reason = data.get("confidence_reason", "")
                 report = data.get("report", "")
                 specialist_section += (
-                    f"[{specialist}] (Confidence: {conf} — {reason})\n"
+                    f"[{specialist}] Confidence: {conf} — {reason}\n"
                     f"{report}\n\n"
                 )
 
             template = (
-                "You are the lead physician chairing a Multidisciplinary Team (MDT) meeting.\n"
-                "Each specialist has provided their findings, a differential diagnosis, "
-                "and a primary diagnosis with supporting and opposing evidence.\n\n"
+                "You are the lead physician at an MDT meeting. Specialists have reviewed the patient.\n\n"
                 + specialist_section +
-                "YOUR TASK: Synthesize all specialist differentials into one unified patient report "
-                "using EXACTLY this format:\n\n"
+                "Write a unified patient summary in plain text using EXACTLY this structure.\n"
+                "No asterisks. No bold. No markdown. No extra commentary.\n\n"
                 "PATIENT SUMMARY\n"
-                "---------------\n"
-                "2-3 sentences describing the patient's overall condition in plain language.\n\n"
+                "Write 2 sentences maximum describing the patient's overall condition in plain clinical language.\n\n"
                 "TOP 3 DIAGNOSES\n"
-                "---------------\n"
-                "Rank the top 3 diagnoses across ALL specialists by overall likelihood. For each:\n"
-                "1. [Condition] — [Likelihood: Most Likely/Possible/Less Likely]\n"
-                "   Flagged by: [specialist names]\n"
-                "   Key evidence FOR: [2-3 specific findings]\n"
-                "   Key evidence AGAINST: [1-2 specific findings or gaps]\n\n"
-                "2. [Condition] — [Likelihood]\n"
-                "   Flagged by: ...\n"
-                "   Key evidence FOR: ...\n"
-                "   Key evidence AGAINST: ...\n\n"
-                "3. [Condition] — [Likelihood]\n"
-                "   Flagged by: ...\n"
-                "   Key evidence FOR: ...\n"
-                "   Key evidence AGAINST: ...\n\n"
+                "For each diagnosis write exactly:\n"
+                "1. [Condition name] — [Most Likely / Possible / Less Likely]\n"
+                "   Flagged by: [specialist names, comma separated]\n"
+                "   Evidence for: [2-3 key findings, plain text]\n"
+                "   Evidence against: [1-2 findings or gaps]\n\n"
+                "2. [Same format]\n\n"
+                "3. [Same format]\n\n"
                 "KEY FINDINGS\n"
-                "---------------\n"
-                "- [finding 1]\n"
-                "- [finding 2]\n"
-                "- [finding 3]\n"
-                "- [finding 4]\n"
-                "- [finding 5]\n\n"
-                "RECOMMENDED NEXT STEPS\n"
-                "---------------\n"
-                "1. [Most urgent action]\n"
-                "2. [Second action]\n"
-                "3. [Third action]\n"
-                "4. [Fourth action]\n\n"
+                "List 4 findings only. One per line. No bullets. No asterisks. Just the text.\n\n"
+                "NEXT STEPS\n"
+                "List 4 actions only. Numbered. One per line. No asterisks.\n\n"
                 "OVERALL RISK LEVEL\n"
-                "---------------\n"
-                "Low / Moderate / High — one sentence justification.\n\n"
-                "Be direct and clinical. No preamble. No repetition. Keep under 500 words."
+                "Write: Low, Moderate, or High — then one sentence justification.\n\n"
+                "Hard limit: 350 words total. No preamble. No sign-off."
             )
             return PromptTemplate.from_template(template)
 
@@ -240,7 +216,7 @@ class Agent:
         return PromptTemplate.from_template(template)
 
     def run(self):
-        print(f"  🔬 {self.role} is analyzing the report...")
+        print(f"  🔬 {self.role} is analyzing...")
         prompt = self.prompt_template.format(medical_report=self.medical_report or "")
         try:
             response = self.model.invoke(prompt)
@@ -253,43 +229,42 @@ class Agent:
                     "confidence":        confidence,
                     "confidence_reason": confidence_reason,
                 }
-            return raw
+            return strip_markdown(raw)
 
         except Exception as e:
-            print(f"  ❌ Error in {self.role}: {e}")
-            print("  Tip: Make sure Ollama is running — run: ollama serve")
+            print(f"  Error in {self.role}: {e}")
             if self.role != "MultidisciplinaryTeam":
                 return {
-                    "report":            f"[{self.role} analysis unavailable: {e}]",
+                    "report":            f"{self.role} analysis unavailable: {e}",
                     "confidence":        "Low",
-                    "confidence_reason": "Error occurred during analysis.",
+                    "confidence_reason": "Error during analysis.",
                 }
-            return f"[MDT analysis unavailable: {e}]"
+            return f"MDT analysis unavailable: {e}"
 
 
 class Cardiologist(Agent):
-    def __init__(self, medical_report): super().__init__(medical_report, "Cardiologist")
+    def __init__(self, r): super().__init__(r, "Cardiologist")
 
 class Psychologist(Agent):
-    def __init__(self, medical_report): super().__init__(medical_report, "Psychologist")
+    def __init__(self, r): super().__init__(r, "Psychologist")
 
 class Pulmonologist(Agent):
-    def __init__(self, medical_report): super().__init__(medical_report, "Pulmonologist")
+    def __init__(self, r): super().__init__(r, "Pulmonologist")
 
 class Neurologist(Agent):
-    def __init__(self, medical_report): super().__init__(medical_report, "Neurologist")
+    def __init__(self, r): super().__init__(r, "Neurologist")
 
 class Endocrinologist(Agent):
-    def __init__(self, medical_report): super().__init__(medical_report, "Endocrinologist")
+    def __init__(self, r): super().__init__(r, "Endocrinologist")
 
 class Gastroenterologist(Agent):
-    def __init__(self, medical_report): super().__init__(medical_report, "Gastroenterologist")
+    def __init__(self, r): super().__init__(r, "Gastroenterologist")
 
 class Dermatologist(Agent):
-    def __init__(self, medical_report): super().__init__(medical_report, "Dermatologist")
+    def __init__(self, r): super().__init__(r, "Dermatologist")
 
 class Hematologist(Agent):
-    def __init__(self, medical_report): super().__init__(medical_report, "Hematologist")
+    def __init__(self, r): super().__init__(r, "Hematologist")
 
 
 SPECIALIST_REGISTRY = {
@@ -306,5 +281,5 @@ SPECIALIST_REGISTRY = {
 
 class MultidisciplinaryTeam(Agent):
     def __init__(self, specialist_reports: dict):
-        extra_info = {"specialist_reports": specialist_reports}
-        super().__init__(role="MultidisciplinaryTeam", extra_info=extra_info)
+        super().__init__(role="MultidisciplinaryTeam",
+                         extra_info={"specialist_reports": specialist_reports})
