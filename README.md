@@ -2,7 +2,6 @@
 
 > A multi-agent clinical decision support system that simulates a Multidisciplinary Medical Team (MDT) using locally-running Large Language Models. Built as a Final Year Project in Computer Science & Engineering.
 
-⚠️ **Disclaimer:** This project is for research and educational purposes only. It is not intended for clinical use and must not be used to make real medical decisions.
 
 ---
 
