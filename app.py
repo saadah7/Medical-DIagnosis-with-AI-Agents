@@ -132,8 +132,9 @@ html, body, .stApp { background: #EEF2F7 !important; font-family: 'DM Sans', san
 label, .stTextInput label, .stTextArea label, .stSelectbox label { font-family:'DM Sans',sans-serif !important; font-size:12px !important; font-weight:600 !important; color:#475569 !important; letter-spacing:.3px !important; text-transform:uppercase !important; }
 .stSelectbox [data-baseweb="select"] > div { background:#fff !important; border-color:#dde4ef !important; }
 .stRadio > div { background:#F8FAFC; border:1px solid #e8edf5; border-radius:9px; padding:5px 10px; }
-[data-testid="stRadioGroup"] label { color:#1a2740 !important; font-weight:600 !important; font-size:13px !important; }
-[data-testid="stRadioGroup"] label p { color:#1a2740 !important; }
+.stRadio label, .stRadio label p, .stRadio label span,
+[data-testid="stRadioGroup"] label, [data-testid="stRadioGroup"] label p,
+[data-baseweb="radio-group"] label p { color:#1a2740 !important; font-size:13px !important; font-weight:600 !important; }
 [data-testid="stFileUploader"] { background:#F8FAFC !important; border:2px dashed #CBD5E1 !important; border-radius:10px !important; }
 [data-testid="metric-container"] { background:#fff !important; border:1px solid #dde4ef !important; border-radius:10px !important; padding:14px 18px !important; }
 [data-testid="stMetricValue"] { font-family:'DM Serif Display',serif !important; color:#112240 !important; }
@@ -210,6 +211,8 @@ def clean_text(t):
 def generate_pdf(result) -> bytes:
     from fpdf import FPDF
 
+    MARGIN = 15
+
     def safe(t):
         return (t or "").encode("latin-1", errors="replace").decode("latin-1")
 
@@ -221,66 +224,73 @@ def generate_pdf(result) -> bytes:
     sp_data = result.get("specialist_reports", {})
 
     pdf = FPDF()
+    pdf.set_margins(MARGIN, 10, MARGIN)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
+    W = pdf.epw  # effective page width (210 - 2*MARGIN = 180)
 
-    # Header bar
+    # ── Header bar (full-bleed, so use page width 210 explicitly) ──────
     pdf.set_fill_color(17, 34, 64)
     pdf.rect(0, 0, 210, 28, "F")
     pdf.set_font("Helvetica", "B", 15)
     pdf.set_text_color(255, 255, 255)
     pdf.set_xy(0, 7)
-    pdf.cell(0, 8, "MediAgent  |  Diagnosis Report", align="C")
+    pdf.cell(210, 8, "MediAgent  |  Diagnosis Report", align="C")
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(160, 185, 210)
     pdf.set_xy(0, 18)
-    pdf.cell(0, 5, safe(f"{ts}   |   {source}"), align="C")
-    pdf.set_y(34)
+    pdf.cell(210, 5, safe(f"{ts}   |   {source}"), align="C")
+    # Reset cursor to left margin before body content
+    pdf.set_xy(MARGIN, 34)
 
-    # Risk banner
+    # ── Risk banner ────────────────────────────────────────────────────
     rc = {"High": (239, 68, 68), "Moderate": (245, 158, 11), "Low": (16, 185, 129)}.get(risk, (148, 163, 184))
     pdf.set_fill_color(*rc)
     pdf.set_text_color(255, 255, 255)
     pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(0, 9, f"  Risk: {risk}   |   Specialists consulted: {len(specs)}", fill=True, ln=True)
-    pdf.ln(5)
+    pdf.cell(W, 9, safe(f"  Risk: {risk}   |   Specialists consulted: {len(specs)}"), fill=True)
+    pdf.ln(14)
 
     def section_header(title):
+        pdf.set_x(MARGIN)
         pdf.set_fill_color(237, 242, 251)
         pdf.set_text_color(17, 34, 64)
         pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(0, 7, f"  {title}", fill=True, ln=True)
-        pdf.ln(1)
+        pdf.cell(W, 7, f"  {title}", fill=True)
+        pdf.ln(8)
+        pdf.set_x(MARGIN)
         pdf.set_text_color(51, 65, 85)
         pdf.set_font("Helvetica", "", 9)
 
     def body(text):
-        pdf.multi_cell(0, 5, safe(text))
+        pdf.set_x(MARGIN)
+        pdf.multi_cell(W, 5, safe(text))
         pdf.ln(3)
 
-    # Patient Summary
+    # ── Patient Summary ────────────────────────────────────────────────
     ps = clean_text(parse_section(summary, "PATIENT SUMMARY", ["TOP 3", "KEY FINDINGS", "NEXT STEPS", "OVERALL RISK"]))
     if ps:
         section_header("PATIENT SUMMARY")
         body(ps)
 
-    # Top 3 Diagnoses
+    # ── Top 3 Diagnoses ───────────────────────────────────────────────
     dx = clean_text(parse_section(summary, "TOP 3 DIAGNOSES", ["KEY FINDINGS", "NEXT STEPS", "OVERALL RISK"]))
     if dx:
         section_header("TOP 3 DIAGNOSES")
         body(dx)
 
-    # Key Findings
+    # ── Key Findings ──────────────────────────────────────────────────
     kf = clean_text(parse_section(summary, "KEY FINDINGS", ["NEXT STEPS", "OVERALL RISK"]))
     if kf:
         section_header("KEY FINDINGS")
         for line in kf.split("\n"):
             line = line.strip()
             if line:
-                pdf.multi_cell(0, 5, safe(f"  \u2022  {line}"))
+                pdf.set_x(MARGIN)
+                pdf.multi_cell(W, 5, safe(f"  \u2022  {line}"))
         pdf.ln(3)
 
-    # Next Steps
+    # ── Next Steps ────────────────────────────────────────────────────
     ns = clean_text(parse_section(summary, "NEXT STEPS", ["OVERALL RISK"]))
     if not ns:
         ns = clean_text(parse_section(summary, "RECOMMENDED NEXT", ["OVERALL RISK"]))
@@ -288,43 +298,48 @@ def generate_pdf(result) -> bytes:
         section_header("NEXT STEPS")
         for i, line in enumerate([l.strip() for l in ns.split("\n") if l.strip()], 1):
             line = re.sub(r'^\d+\.\s*', '', line)
-            pdf.multi_cell(0, 5, safe(f"  {i}. {line}"))
+            pdf.set_x(MARGIN)
+            pdf.multi_cell(W, 5, safe(f"  {i}. {line}"))
         pdf.ln(3)
 
-    # Risk Level
+    # ── Risk Level ────────────────────────────────────────────────────
     rl = clean_text(parse_section(summary, "OVERALL RISK LEVEL", []))
     if rl:
         section_header("OVERALL RISK LEVEL")
         body(f"{risk} \u2014 {rl}")
 
-    # Specialist Confidence
+    # ── Specialist Confidence ─────────────────────────────────────────
     if sp_data:
         section_header("SPECIALIST CONFIDENCE")
         for sp, data in sp_data.items():
             if isinstance(data, dict):
                 conf   = data.get("confidence", "?")
                 reason = data.get("confidence_reason", "")
-                pdf.multi_cell(0, 5, safe(f"  {sp}: {conf} \u2014 {reason}"))
+                pdf.set_x(MARGIN)
+                pdf.multi_cell(W, 5, safe(f"  {sp}: {conf} \u2014 {reason}"))
         pdf.ln(3)
 
-    # Individual Specialist Reports
+    # ── Specialist Reports ────────────────────────────────────────────
     if sp_data:
         section_header("SPECIALIST REPORTS")
         for sp, data in sp_data.items():
             if isinstance(data, dict) and not data.get("failed"):
+                pdf.set_x(MARGIN)
                 pdf.set_font("Helvetica", "B", 8)
                 pdf.set_text_color(14, 90, 160)
-                pdf.cell(0, 5, safe(f"[ {sp} ]"), ln=True)
+                pdf.cell(W, 5, safe(f"[ {sp} ]"))
+                pdf.ln(6)
+                pdf.set_x(MARGIN)
                 pdf.set_font("Helvetica", "", 8)
                 pdf.set_text_color(51, 65, 85)
-                pdf.multi_cell(0, 4, safe(clean_text(data.get("report", ""))))
+                pdf.multi_cell(W, 4, safe(clean_text(data.get("report", ""))))
                 pdf.ln(2)
 
-    # Footer
-    pdf.set_y(-12)
+    # ── Footer ────────────────────────────────────────────────────────
+    pdf.set_xy(MARGIN, -12)
     pdf.set_font("Helvetica", "I", 7)
     pdf.set_text_color(148, 163, 184)
-    pdf.cell(0, 4, "For educational and research use only. Not a substitute for professional medical advice.", align="C")
+    pdf.cell(W, 4, "For educational and research use only. Not a substitute for professional medical advice.", align="C")
 
     return bytes(pdf.output())
 
