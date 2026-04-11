@@ -1,6 +1,20 @@
 from langchain_core.prompts import PromptTemplate
 from langchain_ollama import ChatOllama
 import re
+import requests
+
+OLLAMA_BASE_URL = "http://localhost:11434"
+
+
+def check_ollama():
+    """Raise RuntimeError with a clear message if Ollama is not reachable."""
+    try:
+        requests.get(OLLAMA_BASE_URL, timeout=3)
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError(
+            "Cannot connect to Ollama at http://localhost:11434. "
+            "Make sure Ollama is running (`ollama serve`) before starting MediAgent."
+        )
 
 OLLAMA_MODEL = "llama3.2"
 
@@ -144,9 +158,8 @@ def parse_confidence(raw_response: str) -> tuple:
     if reason_match:
         reason = reason_match.group(1).strip()
 
-    # Strip confidence block and all markdown from the clinical text
+    # Strip confidence block only; markdown cleanup happens at render time
     clean = re.sub(r"\nCONFIDENCE:.*", "", raw_response, flags=re.IGNORECASE | re.DOTALL).strip()
-    clean = strip_markdown(clean)
     return clean, confidence, reason
 
 
@@ -172,7 +185,7 @@ class Agent:
         self.model = ChatOllama(
             model=OLLAMA_MODEL,
             temperature=0,
-            base_url="http://localhost:11434",
+            base_url=OLLAMA_BASE_URL,
         )
 
     def create_prompt_template(self):
@@ -238,45 +251,16 @@ class Agent:
                     "report":            f"{self.role} analysis unavailable: {e}",
                     "confidence":        "Low",
                     "confidence_reason": "Error during analysis.",
+                    "failed":            True,
                 }
             return f"MDT analysis unavailable: {e}"
 
 
-class Cardiologist(Agent):
-    def __init__(self, r): super().__init__(r, "Cardiologist")
-
-class Psychologist(Agent):
-    def __init__(self, r): super().__init__(r, "Psychologist")
-
-class Pulmonologist(Agent):
-    def __init__(self, r): super().__init__(r, "Pulmonologist")
-
-class Neurologist(Agent):
-    def __init__(self, r): super().__init__(r, "Neurologist")
-
-class Endocrinologist(Agent):
-    def __init__(self, r): super().__init__(r, "Endocrinologist")
-
-class Gastroenterologist(Agent):
-    def __init__(self, r): super().__init__(r, "Gastroenterologist")
-
-class Dermatologist(Agent):
-    def __init__(self, r): super().__init__(r, "Dermatologist")
-
-class Hematologist(Agent):
-    def __init__(self, r): super().__init__(r, "Hematologist")
+def _make_specialist(role: str):
+    return lambda medical_report: Agent(medical_report, role)
 
 
-SPECIALIST_REGISTRY = {
-    "Cardiologist":       Cardiologist,
-    "Psychologist":       Psychologist,
-    "Pulmonologist":      Pulmonologist,
-    "Neurologist":        Neurologist,
-    "Endocrinologist":    Endocrinologist,
-    "Gastroenterologist": Gastroenterologist,
-    "Dermatologist":      Dermatologist,
-    "Hematologist":       Hematologist,
-}
+SPECIALIST_REGISTRY = {role: _make_specialist(role) for role in SPECIALIST_PROMPTS}
 
 
 class MultidisciplinaryTeam(Agent):
