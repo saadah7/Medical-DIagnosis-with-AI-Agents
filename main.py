@@ -4,10 +4,16 @@
 # Runs 100% locally via Ollama — no API key needed.
 # ─────────────────────────────────────────────────────────────────────────────
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from Utils.agents import select_specialists, SPECIALIST_REGISTRY, MultidisciplinaryTeam
-import os
+from Utils.agents import select_specialists, SPECIALIST_REGISTRY, MultidisciplinaryTeam, check_ollama
+import os, re
 
 # ── Mode Selection ────────────────────────────────────────────────────────────
+try:
+    check_ollama()
+except RuntimeError as e:
+    print(f"\n❌  {e}")
+    raise SystemExit(1)
+
 print("\n" + "=" * 65)
 print("   🏥  MEDICAL DIAGNOSIS — AI AGENT SYSTEM")
 print("=" * 65)
@@ -50,7 +56,8 @@ else:
     print("\n" + "-" * 65)
     print("📝  PATIENT INFORMATION")
     print("-" * 65)
-    name   = input("Patient Name       : ").strip() or "Unknown"
+    raw_name = input("Patient Name       : ").strip() or "Unknown"
+    name     = re.sub(r'[^\w\s-]', '', raw_name).strip() or "Unknown"
     age    = input("Age                : ").strip() or "Unknown"
     gender = input("Gender             : ").strip() or "Unknown"
 
