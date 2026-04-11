@@ -1,10 +1,16 @@
 import streamlit as st
 import os, json, re
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from Utils.agents import select_specialists, SPECIALIST_REGISTRY, MultidisciplinaryTeam, OLLAMA_MODEL
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+from Utils.agents import select_specialists, SPECIALIST_REGISTRY, MultidisciplinaryTeam, OLLAMA_MODEL, check_ollama
 
 st.set_page_config(page_title="MediAgent", page_icon="⚕️", layout="wide", initial_sidebar_state="expanded")
+
+try:
+    check_ollama()
+except RuntimeError as _ollama_err:
+    st.error(str(_ollama_err))
+    st.stop()
 
 st.markdown("""
 <style>
@@ -126,6 +132,8 @@ html, body, .stApp { background: #EEF2F7 !important; font-family: 'DM Sans', san
 label, .stTextInput label, .stTextArea label, .stSelectbox label { font-family:'DM Sans',sans-serif !important; font-size:12px !important; font-weight:600 !important; color:#475569 !important; letter-spacing:.3px !important; text-transform:uppercase !important; }
 .stSelectbox [data-baseweb="select"] > div { background:#fff !important; border-color:#dde4ef !important; }
 .stRadio > div { background:#F8FAFC; border:1px solid #e8edf5; border-radius:9px; padding:5px 10px; }
+[data-testid="stRadioGroup"] label { color:#1a2740 !important; font-weight:600 !important; font-size:13px !important; }
+[data-testid="stRadioGroup"] label p { color:#1a2740 !important; }
 [data-testid="stFileUploader"] { background:#F8FAFC !important; border:2px dashed #CBD5E1 !important; border-radius:10px !important; }
 [data-testid="metric-container"] { background:#fff !important; border:1px solid #dde4ef !important; border-radius:10px !important; padding:14px 18px !important; }
 [data-testid="stMetricValue"] { font-family:'DM Serif Display',serif !important; color:#112240 !important; }
@@ -197,6 +205,128 @@ def clean_text(t):
     t = re.sub(r'^\s*[-•]\s+', '', t, flags=re.MULTILINE)
     t = re.sub(r'\n{3,}', '\n\n', t)
     return t.strip()
+
+
+def generate_pdf(result) -> bytes:
+    from fpdf import FPDF
+
+    def safe(t):
+        return (t or "").encode("latin-1", errors="replace").decode("latin-1")
+
+    summary = result.get("final_summary", "")
+    risk    = result.get("risk", "Unknown")
+    source  = result.get("source", "")
+    ts      = result.get("timestamp", "")
+    specs   = result.get("specialists", [])
+    sp_data = result.get("specialist_reports", {})
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+
+    # Header bar
+    pdf.set_fill_color(17, 34, 64)
+    pdf.rect(0, 0, 210, 28, "F")
+    pdf.set_font("Helvetica", "B", 15)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_xy(0, 7)
+    pdf.cell(0, 8, "MediAgent  |  Diagnosis Report", align="C")
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(160, 185, 210)
+    pdf.set_xy(0, 18)
+    pdf.cell(0, 5, safe(f"{ts}   |   {source}"), align="C")
+    pdf.set_y(34)
+
+    # Risk banner
+    rc = {"High": (239, 68, 68), "Moderate": (245, 158, 11), "Low": (16, 185, 129)}.get(risk, (148, 163, 184))
+    pdf.set_fill_color(*rc)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 9, f"  Risk: {risk}   |   Specialists consulted: {len(specs)}", fill=True, ln=True)
+    pdf.ln(5)
+
+    def section_header(title):
+        pdf.set_fill_color(237, 242, 251)
+        pdf.set_text_color(17, 34, 64)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(0, 7, f"  {title}", fill=True, ln=True)
+        pdf.ln(1)
+        pdf.set_text_color(51, 65, 85)
+        pdf.set_font("Helvetica", "", 9)
+
+    def body(text):
+        pdf.multi_cell(0, 5, safe(text))
+        pdf.ln(3)
+
+    # Patient Summary
+    ps = clean_text(parse_section(summary, "PATIENT SUMMARY", ["TOP 3", "KEY FINDINGS", "NEXT STEPS", "OVERALL RISK"]))
+    if ps:
+        section_header("PATIENT SUMMARY")
+        body(ps)
+
+    # Top 3 Diagnoses
+    dx = clean_text(parse_section(summary, "TOP 3 DIAGNOSES", ["KEY FINDINGS", "NEXT STEPS", "OVERALL RISK"]))
+    if dx:
+        section_header("TOP 3 DIAGNOSES")
+        body(dx)
+
+    # Key Findings
+    kf = clean_text(parse_section(summary, "KEY FINDINGS", ["NEXT STEPS", "OVERALL RISK"]))
+    if kf:
+        section_header("KEY FINDINGS")
+        for line in kf.split("\n"):
+            line = line.strip()
+            if line:
+                pdf.multi_cell(0, 5, safe(f"  \u2022  {line}"))
+        pdf.ln(3)
+
+    # Next Steps
+    ns = clean_text(parse_section(summary, "NEXT STEPS", ["OVERALL RISK"]))
+    if not ns:
+        ns = clean_text(parse_section(summary, "RECOMMENDED NEXT", ["OVERALL RISK"]))
+    if ns:
+        section_header("NEXT STEPS")
+        for i, line in enumerate([l.strip() for l in ns.split("\n") if l.strip()], 1):
+            line = re.sub(r'^\d+\.\s*', '', line)
+            pdf.multi_cell(0, 5, safe(f"  {i}. {line}"))
+        pdf.ln(3)
+
+    # Risk Level
+    rl = clean_text(parse_section(summary, "OVERALL RISK LEVEL", []))
+    if rl:
+        section_header("OVERALL RISK LEVEL")
+        body(f"{risk} \u2014 {rl}")
+
+    # Specialist Confidence
+    if sp_data:
+        section_header("SPECIALIST CONFIDENCE")
+        for sp, data in sp_data.items():
+            if isinstance(data, dict):
+                conf   = data.get("confidence", "?")
+                reason = data.get("confidence_reason", "")
+                pdf.multi_cell(0, 5, safe(f"  {sp}: {conf} \u2014 {reason}"))
+        pdf.ln(3)
+
+    # Individual Specialist Reports
+    if sp_data:
+        section_header("SPECIALIST REPORTS")
+        for sp, data in sp_data.items():
+            if isinstance(data, dict) and not data.get("failed"):
+                pdf.set_font("Helvetica", "B", 8)
+                pdf.set_text_color(14, 90, 160)
+                pdf.cell(0, 5, safe(f"[ {sp} ]"), ln=True)
+                pdf.set_font("Helvetica", "", 8)
+                pdf.set_text_color(51, 65, 85)
+                pdf.multi_cell(0, 4, safe(clean_text(data.get("report", ""))))
+                pdf.ln(2)
+
+    # Footer
+    pdf.set_y(-12)
+    pdf.set_font("Helvetica", "I", 7)
+    pdf.set_text_color(148, 163, 184)
+    pdf.cell(0, 4, "For educational and research use only. Not a substitute for professional medical advice.", align="C")
+
+    return bytes(pdf.output())
 
 def parse_section(text, start_key, end_keys):
     """Extract a named section from plain-text report."""
@@ -400,52 +530,99 @@ def render_diagnosis(result):
 
     # Download
     st.markdown('<hr class="hr">', unsafe_allow_html=True)
-    out_path = result.get("output_path","")
+    dl1, dl2 = st.columns(2)
+    out_path = result.get("output_path", "")
     if out_path and os.path.exists(out_path):
-        st.download_button(
-            "⬇️  Download Full Report (.txt)",
+        dl1.download_button(
+            "⬇️  Download Report (.txt)",
             data=open(out_path, encoding="utf-8").read(),
             file_name=f"diagnosis_{result['id']}.txt",
             mime="text/plain",
-            use_container_width=True
+            use_container_width=True,
         )
+    try:
+        pdf_bytes = generate_pdf(result)
+        dl2.download_button(
+            "⬇️  Download Report (.pdf)",
+            data=pdf_bytes,
+            file_name=f"diagnosis_{result['id']}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+    except Exception as _pdf_err:
+        dl2.warning(f"PDF unavailable: {_pdf_err}")
 
 def run_diagnosis(medical_report, source_label):
     selected  = select_specialists(medical_report)
     agents    = {n: SPECIALIST_REGISTRY[n](medical_report) for n in selected}
     responses = {}
     ph = st.empty()
+    total = len(selected)
 
-    def upd(done, pending):
-        bd = "".join(f'<span class="ab ab-d">{ICONS.get(s,"🔬")} {s} ✓</span>' for s in done)
-        bp = "".join(f'<span class="ab ab-p">{ICONS.get(s,"🔬")} {s}</span>' for s in pending)
+    CONF_COLOR = {"High": "#10B981", "Medium": "#F59E0B", "Low": "#94a3b8"}
+
+    def step_bar(phase, done_count):
+        s1 = '<span style="color:#10B981;font-weight:700;font-size:12px">✓ Input</span>'
+        s2_color = "#0EA5E9" if phase == "agents" else "#10B981" if phase == "mdt" else "#94a3b8"
+        s2_prefix = "⟳ " if phase == "agents" else "✓ "
+        s2 = f'<span style="color:{s2_color};font-weight:700;font-size:12px">{s2_prefix}Specialists ({done_count}/{total})</span>'
+        s3_color = "#0EA5E9" if phase == "mdt" else "#94a3b8"
+        s3_prefix = "⟳ " if phase == "mdt" else ""
+        s3 = f'<span style="color:{s3_color};font-weight:700;font-size:12px">{s3_prefix}Synthesis</span>'
+        arr = '<span style="color:#cbd5e1;font-size:12px">→</span>'
+        return f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #eef2f7">{s1}{arr}{s2}{arr}{s3}</div>'
+
+    def upd(done_data, pending, phase="agents"):
+        bd = ""
+        for s, data in done_data.items():
+            conf = data.get("confidence", "?")
+            col  = CONF_COLOR.get(conf, "#94a3b8")
+            bd  += (
+                f'<span class="ab ab-d" style="border-color:{col}">'
+                f'{ICONS.get(s,"🔬")} {s}&nbsp;'
+                f'<span style="color:{col};font-size:10px;font-weight:700">{conf}</span>'
+                f'</span>'
+            )
+        bp = "".join(
+            f'<span class="ab ab-r">{ICONS.get(s,"🔬")} {s}</span>'
+            for s in pending
+        )
         ph.markdown(
-            f'<div class="card" style="padding:14px 18px">'
-            f'<div class="cl">Specialist Panel — Running in Parallel</div>'
-            f'<div style="display:flex;flex-wrap:wrap;gap:2px">{bd}{bp}</div></div>',
+            f'<div class="card" style="padding:16px 20px">'
+            f'{step_bar(phase, len(done_data))}'
+            f'<div style="display:flex;flex-wrap:wrap;gap:4px">{bd}{bp}</div>'
+            f'</div>',
             unsafe_allow_html=True
         )
 
-    done, pending = [], list(selected)
-    upd([], pending)
+    done_data = {}
+    upd({}, list(selected), phase="agents")
+
+    AGENT_TIMEOUT = 120  # seconds per specialist
 
     with ThreadPoolExecutor() as ex:
-        futs = {ex.submit(lambda n=n, a=a: (n, a.run()), ): n for n, a in agents.items()}
+        futs = {ex.submit(lambda n=n, a=a: (n, a.run())): n for n, a in agents.items()}
         for fut in as_completed(futs):
-            n, resp = fut.result()
+            try:
+                n, resp = fut.result(timeout=AGENT_TIMEOUT)
+            except FuturesTimeoutError:
+                n = futs[fut]
+                resp = {
+                    "report": f"{n} timed out after {AGENT_TIMEOUT}s.",
+                    "confidence": "Low",
+                    "confidence_reason": "Agent timed out.",
+                    "failed": True,
+                }
             responses[n] = resp
-            done.append(n)
-            if n in pending: pending.remove(n)
-            upd(done, pending)
+            done_data[n] = resp
+            pending = [s for s in selected if s not in done_data]
+            upd(done_data, pending, phase="agents")
 
-    ph.markdown(
-        '<div class="card card-t-sky" style="padding:14px 18px">'
-        '<div class="cl">Multidisciplinary Team</div>'
-        '<div style="font-size:14px;color:#112240;font-weight:600">'
-        '🧠 &nbsp;Lead physician synthesizing all findings...</div></div>',
-        unsafe_allow_html=True
-    )
-    mdt    = MultidisciplinaryTeam(specialist_reports=responses)
+    # Only pass successful reports to MDT to avoid polluting the synthesis
+    valid_reports = {k: v for k, v in responses.items() if not v.get("failed")}
+
+    upd(done_data, [], phase="mdt")
+    mdt    = MultidisciplinaryTeam(specialist_reports=valid_reports)
     fs     = mdt.run()
     ph.empty()
     risk   = parse_risk(fs)
@@ -475,30 +652,42 @@ with st.sidebar:
         unsafe_allow_html=True
     )
     st.markdown(
-        f'<div class="nsec"><div class="nst">Active Model</div>'
+        f'<div class="nsec"><div class="nst">Model</div>'
         f'<div style="background:rgba(14,165,233,.1);border:1px solid rgba(14,165,233,.2);'
-        f'border-radius:7px;padding:9px 12px">'
-        f'<span style="font-size:11px;color:rgba(255,255,255,.3)">OLLAMA</span><br>'
+        f'border-radius:7px;padding:8px 12px">'
+        f'<span style="font-size:10px;color:rgba(255,255,255,.3)">OLLAMA /</span> '
         f'<span style="font-size:13px;font-weight:600;color:#7dd3fc !important">{OLLAMA_MODEL}</span>'
         f'</div></div>',
         unsafe_allow_html=True
     )
     st.markdown('<div class="nd"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="nsec"><div class="nst">Specialist Panel</div>', unsafe_allow_html=True)
-    for sp, ic in ICONS.items():
-        st.markdown(f'<div class="ni"><span style="width:6px;height:6px;border-radius:50%;background:#0EA5E9;flex-shrink:0;display:inline-block"></span>{ic} {sp}</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown('<div class="nd"></div>', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="nsec"><div class="nst">Confidence Scale</div>'
-        f'<div style="margin-bottom:7px">{conf_pill("High")}&nbsp;<span style="font-size:12px;color:rgba(255,255,255,.4)">3+ direct indicators</span></div>'
-        f'<div style="margin-bottom:7px">{conf_pill("Medium")}&nbsp;<span style="font-size:12px;color:rgba(255,255,255,.4)">1–2 indirect signs</span></div>'
-        f'<div>{conf_pill("Low")}&nbsp;<span style="font-size:12px;color:rgba(255,255,255,.4)">Precautionary only</span></div>'
-        f'</div>',
+        '<div class="nsec"><div class="nst">How it works</div>'
+        '<div style="display:flex;flex-direction:column;gap:10px;margin-top:6px">'
+        '<div style="display:flex;align-items:flex-start;gap:10px">'
+        '<span style="min-width:22px;height:22px;border-radius:50%;background:rgba(14,165,233,.2);'
+        'border:1px solid rgba(14,165,233,.3);display:flex;align-items:center;justify-content:center;'
+        'font-size:11px;font-weight:700;color:#7dd3fc">1</span>'
+        '<span style="font-size:12px;color:rgba(255,255,255,.55);line-height:1.5">Upload a report or enter symptoms manually</span>'
+        '</div>'
+        '<div style="display:flex;align-items:flex-start;gap:10px">'
+        '<span style="min-width:22px;height:22px;border-radius:50%;background:rgba(14,165,233,.2);'
+        'border:1px solid rgba(14,165,233,.3);display:flex;align-items:center;justify-content:center;'
+        'font-size:11px;font-weight:700;color:#7dd3fc">2</span>'
+        '<span style="font-size:12px;color:rgba(255,255,255,.55);line-height:1.5">Up to 8 specialist agents analyze in parallel</span>'
+        '</div>'
+        '<div style="display:flex;align-items:flex-start;gap:10px">'
+        '<span style="min-width:22px;height:22px;border-radius:50%;background:rgba(14,165,233,.2);'
+        'border:1px solid rgba(14,165,233,.3);display:flex;align-items:center;justify-content:center;'
+        'font-size:11px;font-weight:700;color:#7dd3fc">3</span>'
+        '<span style="font-size:12px;color:rgba(255,255,255,.55);line-height:1.5">Lead physician synthesizes a unified diagnosis</span>'
+        '</div>'
+        '</div></div>',
         unsafe_allow_html=True
     )
+    st.markdown('<div class="nd"></div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="ndis">⚠️ For educational and research use only. Not a substitute for professional medical advice.</div>',
+        '<div class="ndis">⚠️ Educational use only. Not a substitute for professional medical advice.</div>',
         unsafe_allow_html=True
     )
 
@@ -519,27 +708,29 @@ tab1, tab2 = st.tabs(["⚕️  New Diagnosis", "📂  History"])
 # TAB 1
 # ══════════════════════════════════════════════════════════════════════════════
 with tab1:
-    st.markdown('<div style="height:22px"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="sh">New Diagnosis</div><div class="ss">Provide patient data via a report file or enter symptoms manually.</div>', unsafe_allow_html=True)
-
-    mode = st.radio("mode", ["📄  Report File", "✏️  Manual Entry"], horizontal=True, label_visibility="collapsed")
+    st.markdown('<div style="height:16px"></div>', unsafe_allow_html=True)
+    mode = st.radio("mode", ["📄  Upload Report", "✏️  Enter Symptoms"], horizontal=True, label_visibility="collapsed")
 
     medical_report = None
     source_label   = ""
 
-    if "File" in mode:
-        st.markdown('<div class="card" style="margin-top:6px">', unsafe_allow_html=True)
-        st.markdown('<div class="cl">📁 &nbsp;PATIENT REPORT</div>', unsafe_allow_html=True)
+    if "Upload" in mode:
+        st.markdown('<div class="card" style="margin-top:8px">', unsafe_allow_html=True)
         cu, cs = st.columns(2)
         with cu:
-            st.markdown("**Upload file**")
+            st.markdown('<div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:6px">Upload .txt file</div>', unsafe_allow_html=True)
             up = st.file_uploader("Upload .txt", type=["txt"], label_visibility="collapsed")
             if up:
-                medical_report = up.read().decode("utf-8", errors="ignore")
-                source_label   = f"Uploaded: {up.name}"
-                st.success(f"Loaded: {up.name}")
+                MAX_BYTES = 50_000
+                raw_bytes = up.read()
+                if len(raw_bytes) > MAX_BYTES:
+                    st.error(f"File too large ({len(raw_bytes)//1024} KB). Max is {MAX_BYTES//1024} KB.")
+                else:
+                    medical_report = raw_bytes.decode("utf-8", errors="ignore")
+                    source_label   = f"Uploaded: {up.name}"
+                    st.success(f"Ready: {up.name}")
         with cs:
-            st.markdown("**Select existing report**")
+            st.markdown('<div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:6px">Or pick a sample report</div>', unsafe_allow_html=True)
             rd = "Medical Reports"
             rfs = sorted([f for f in os.listdir(rd) if f.endswith(".txt")]) if os.path.isdir(rd) else []
             if rfs:
@@ -548,65 +739,54 @@ with tab1:
                     with open(os.path.join(rd, ch), "r", encoding="utf-8", errors="ignore") as fh:
                         medical_report = fh.read()
                     source_label = f"File: {ch}"
-                    st.success(f"Loaded: {ch}")
+                    st.success(f"Ready: {ch}")
             else:
                 st.info("No reports in 'Medical Reports/' folder.")
         if medical_report:
-            with st.expander("Preview"):
+            with st.expander("Preview report"):
                 st.code(medical_report[:800] + ("…" if len(medical_report) > 800 else ""), language=None)
         st.markdown('</div>', unsafe_allow_html=True)
 
     else:
-        st.markdown('<div class="card" style="margin-top:6px">', unsafe_allow_html=True)
-        st.markdown('<div class="cl">👤 &nbsp;PATIENT DEMOGRAPHICS</div>', unsafe_allow_html=True)
+        st.markdown('<div class="card" style="margin-top:8px">', unsafe_allow_html=True)
         c1,c2,c3 = st.columns(3)
         name   = c1.text_input("Patient Name",  placeholder="Full name")
         age    = c2.text_input("Age",            placeholder="e.g. 42")
         gender = c3.selectbox("Gender", ["— select —","Male","Female","Other","Prefer not to say"])
-        st.markdown('<hr class="hr">', unsafe_allow_html=True)
-        st.markdown('<div class="cl">🩺 &nbsp;PRESENTING SYMPTOMS</div>', unsafe_allow_html=True)
-        symptoms = st.text_area("Symptoms", placeholder="Describe all symptoms including onset, duration, severity...", height=110, label_visibility="collapsed")
+        symptoms = st.text_area("Symptoms", placeholder="Describe symptoms — onset, duration, severity, location...", height=110)
         st.markdown('<hr class="hr">', unsafe_allow_html=True)
         ch2, cm2 = st.columns(2)
         with ch2:
-            st.markdown('<div class="cl">📋 &nbsp;MEDICAL HISTORY</div>', unsafe_allow_html=True)
-            history = st.text_area("History", placeholder="Known conditions, past surgeries, family history...", height=85, label_visibility="collapsed")
+            history = st.text_area("Medical History", placeholder="Known conditions, past surgeries, family history...", height=80)
         with cm2:
-            st.markdown('<div class="cl">💊 &nbsp;CURRENT MEDICATIONS</div>', unsafe_allow_html=True)
-            medications = st.text_area("Medications", placeholder="Drug name, dosage, frequency...", height=85, label_visibility="collapsed")
+            medications = st.text_area("Current Medications", placeholder="Drug name, dosage, frequency...", height=80)
         st.markdown('</div>', unsafe_allow_html=True)
         if symptoms.strip():
             g = gender if gender != "— select —" else "Not specified"
+            safe_name = re.sub(r'[^\w\s-]', '', name).strip() or 'Unknown'
             medical_report = (
-                f"Patient Name: {name or 'Unknown'}\nAge: {age or 'Unknown'}\nGender: {g}\n\n"
+                f"Patient Name: {safe_name}\nAge: {age or 'Unknown'}\nGender: {g}\n\n"
                 f"Presenting Symptoms:\n{symptoms}\n\nMedical History:\n{history or 'None.'}\n\n"
                 f"Current Medications:\n{medications or 'None.'}\n"
             )
-            source_label = f"Manual — {name or 'Unknown'}"
+            source_label = f"Manual — {safe_name}"
 
     st.markdown('<div style="height:6px"></div>', unsafe_allow_html=True)
     go = st.button("⚕️  Run Diagnostic Analysis", disabled=(medical_report is None), use_container_width=True)
 
     if go and medical_report:
         st.markdown('<hr class="hr">', unsafe_allow_html=True)
-        st.markdown(
-            '<div class="card card-t-navy" style="padding:14px 20px;margin-bottom:14px">'
-            '<div class="cl">⚙️ &nbsp;ANALYSIS IN PROGRESS</div>'
-            '<div style="font-size:13px;color:#334155">Specialist agents are running in parallel. This takes 1–3 minutes depending on your hardware.</div>'
-            '</div>',
-            unsafe_allow_html=True
-        )
-        with st.spinner("Running multi-agent analysis..."):
+        with st.spinner(""):
             result = run_diagnosis(medical_report, source_label)
         st.session_state.done   = True
         st.session_state.result = result
         st.markdown('<hr class="hr">', unsafe_allow_html=True)
-        st.markdown('<div class="sh">Diagnosis Complete</div><div class="ss">All specialists have submitted findings. Summary below.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sh">Results</div>', unsafe_allow_html=True)
         render_diagnosis(result)
 
     elif st.session_state.done and st.session_state.result:
         st.markdown('<hr class="hr">', unsafe_allow_html=True)
-        st.markdown('<div class="sh">Last Diagnosis</div><div class="ss">Results from your most recent session.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sh">Last Diagnosis</div>', unsafe_allow_html=True)
         render_diagnosis(st.session_state.result)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -658,8 +838,13 @@ with tab2:
                     unsafe_allow_html=True
                 )
                 op = log.get("output_path","")
+                hd1, hd2 = st.columns(2)
                 if op and os.path.exists(op):
                     with open(op, encoding="utf-8") as fh:
-                        st.download_button("⬇️  Download", fh.read(), f"diagnosis_{log['id']}.txt", "text/plain", key=f"dl_{log['id']}")
+                        hd1.download_button("⬇️  Download (.txt)", fh.read(), f"diagnosis_{log['id']}.txt", "text/plain", key=f"dl_{log['id']}", use_container_width=True)
+                try:
+                    hd2.download_button("⬇️  Download (.pdf)", data=generate_pdf(log), file_name=f"diagnosis_{log['id']}.pdf", mime="application/pdf", key=f"pdf_{log['id']}", use_container_width=True)
+                except Exception:
+                    pass
 
 st.markdown('</div>', unsafe_allow_html=True)
