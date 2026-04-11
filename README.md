@@ -51,11 +51,9 @@ MediAgent/
 │   ├── Medical Report - Robert Miller - COPD.txt
 │   └── Medical Report - Michael Johnson - Panic Attack Disorder.txt
 │
-├── results/                        # Auto-generated .txt diagnosis reports
+├── results/                        # Auto-generated .txt/.pdf diagnosis reports
 ├── logs/                           # Auto-generated .json session history
-├── requirements.txt
-├── README.md
-└── README_LOCAL.md
+└── requirements.txt
 ```
 
 ---
@@ -76,11 +74,14 @@ MediAgent/
 
 ## Setup & Installation
 
+> **Will this run on any device after cloning?**
+> Not automatically. This project uses [Ollama](https://ollama.com) to run the LLM locally, which is a **system-level install** — not a Python package. Every device needs to complete Steps 1–3 below before `pip install` and `streamlit run` will work. If you need zero-setup portability, you would need to swap Ollama for a cloud API (e.g. Groq free tier) or package everything in Docker.
+
 ### Prerequisites
 
 - Python 3.10 or higher
 - [Ollama](https://ollama.com/download) installed on your machine
-- ~2.5 GB disk space for the LLaMA 3.2 model
+- ~2.5 GB free disk space for the LLaMA 3.2 model
 
 ---
 
@@ -185,7 +186,7 @@ python main.py
    - Recommended Next Steps
    - Overall Risk Level (Low / Moderate / High)
    - Expandable specialist reports with full differential reasoning
-6. Download the full report as a `.txt` file
+6. Download the full report as `.txt` or `.pdf`
 7. View past sessions in the **History** tab
 
 ### CLI (`main.py`)
@@ -271,9 +272,7 @@ Open `main.py` and edit the `REPORT_PATH` variable.
 ### Add a new specialist agent
 
 1. Add keywords to `SPECIALIST_KEYWORDS` in `agents.py`
-2. Add a prompt to `SPECIALIST_PROMPTS`
-3. Create a class inheriting from `Agent`
-4. Add to `SPECIALIST_REGISTRY`
+2. Add a prompt to `SPECIALIST_PROMPTS` — `SPECIALIST_REGISTRY` is auto-built from this dict, no extra step needed
 
 ---
 
@@ -299,7 +298,6 @@ Open `main.py` and edit the `REPORT_PATH` variable.
 - **Cloud deployment** — Groq free API + Streamlit Cloud for browser access from any device
 - **EHR integration** — connect to Electronic Health Record systems via HL7/FHIR standard
 - **Multilingual support** — Urdu, Hindi, Arabic for regional healthcare contexts
-- **PDF report export** — formatted downloadable clinical PDF with branding and confidence charts
 
 ---
 
